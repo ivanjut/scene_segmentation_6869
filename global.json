@@ -1,0 +1,12 @@
+{
+    "container_image": "echen9898/scene_seg:0.1.0_gpu",
+    "container_workdir": "/scene_seg",
+    "container_resultsdir": "/scene_seg/runs",
+    "local_workdir": ".",
+    "container_resultsdir": "/scene_seg/runs",
+    "local_resultsdir": "./runs",
+    "cpu_trainer_ami": "ami-0bc525f9b0ca472cf",
+    "gpu_trainer_ami": "ami-07127bbb2a2de4733",
+    "tb_port": "12345",
+    "tb_port_local": "4000"
+}
