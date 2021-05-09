@@ -119,9 +119,9 @@ def get_data(batch_size):
                     transforms.ToTensor()
                 ])
 
-    training_data = SegmentationDataset(train_image_ids, './', index_ade20k, transform=transform, target_transform=target_transform)
+    training_data = SegmentationDataset(train_image_ids[:4], './', index_ade20k, transform=transform, target_transform=target_transform)
     train_dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=False)
-    testing_data = SegmentationDataset(test_image_ids, './', index_ade20k, transform=transform, target_transform=target_transform)
+    testing_data = SegmentationDataset(test_image_ids[:4], './', index_ade20k, transform=transform, target_transform=target_transform)
     test_dataloader = DataLoader(testing_data, batch_size=batch_size, shuffle=False)
 
     return train_dataloader, test_dataloader
@@ -148,6 +148,10 @@ if __name__ == '__main__':
 
     for i in range(args.epochs):
 
+        print('\n' + '#'*100)
+        print('Epoch {}'.format(i+1))
+        print('#'*100 + '\n')
+
         # training pass
         running_loss = 0
         for images, labels in train_dataloader:
@@ -161,8 +165,8 @@ if __name__ == '__main__':
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-        print('Epoch {} - Training loss: {}'.format(i+1, running_loss/len(train_dataloader)))
-        torch.save(model.state_dict(), result_path+'/weights.pkl')
+        print('Training loss: {}'.format(running_loss/len(train_dataloader)))
+        torch.save(model.state_dict(), result_path+'/epochs_{}_weights.pkl'.format(i+1))
 
         # testing pass
         model.eval()
@@ -171,11 +175,14 @@ if __name__ == '__main__':
         for images, labels in test_dataloader:
             num_pixels += 224*224*len(images)
             output = model(images)['out']
+            labels = encode_label(labels)
             probs = torch.nn.functional.softmax(output, dim=1)
             preds = torch.argmax(probs, dim=1, keepdim=True)
-            num_correct += torch.sum((probs == preds).to(int)).item()
-        print('Epoch {} - Testing accuracy: {}'.format(i+1, num_correct/num_pixels))
+            num_correct += torch.sum((preds == labels).to(int)).item()
+        print('Testing accuracy: {}'.format(num_correct/num_pixels))
         model.train()
+
+    print("DONE TRAINING!")
 
 
 
