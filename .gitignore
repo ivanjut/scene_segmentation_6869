@@ -1,7 +1,6 @@
 
 # Any custom local files you use 
 ADE20K_2021_17_01
-Makefile*
 .ipynb*
 __pycache__*
 
