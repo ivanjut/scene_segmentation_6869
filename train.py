@@ -11,6 +11,8 @@ from torchvision import models, transforms, io
 from torch.utils.data import Dataset, DataLoader
 import utils
 import os
+import time
+
 
 class SegmentationDataset(Dataset):
     def __init__(self, image_ids, root_dir, index_mat, transform=None, target_transform=None):
@@ -47,34 +49,19 @@ class SegmentationDataset(Dataset):
         sample = (image, label)
         return sample
 
-def encode_label(label_arr):
+
+def encode_label(label_arr, obj_id_map):
     """
     Encode labels for evaluating loss
     label_arr (tensor): B x 1 x H x W
+    obj_id_map: dictionary mapping label class IDs to new (0-150) range IDs
     """
-    with open('ADE20K_2021_17_01/index_ade20k.pkl', 'rb') as f:
-        index_ade20k = pkl.load(f)
-    objects_mat = index_ade20k['objectPresence']
-
-    # Find 150 most common object IDs and non-common object IDs
-    total_object_counts = np.sum(objects_mat, axis=1)
-    object_count_ids = np.argsort(total_object_counts)[::-1]
-    most_common_obj_ids = object_count_ids[:150]
-
-    # Maps {obj_ids: 0-149}
-    obj_id_map = {sorted(most_common_obj_ids)[idx]: idx + 1 for idx in range(150)}
-    obj_id_map[-1] = 0
-
-    B, H, W = label_arr.size()[0], label_arr.size()[2], label_arr.size()[3]
-    encoded_label = np.zeros((B, H, W))
-    for b in range(B):
-        for h in range(H):
-            for w in range(W):
-                class_id = label_arr[b, 0, h, w].cpu().numpy()
-                new_obj_idx = obj_id_map[class_id - 1]
-                encoded_label[b, h, w] = new_obj_idx
+    convert_label_ids = lambda i: obj_id_map[i-1]
+    vect_convert_label_ids = np.vectorize(convert_label_ids)
+    encoded_label = vect_convert_label_ids(label_arr.squeeze().numpy())
     
     return torch.tensor(encoded_label, dtype=torch.long)
+
 
 def get_data(batch_size):
     """
@@ -96,6 +83,9 @@ def get_data(batch_size):
 
     # Only common objects included
     common_objects_mat = objects_mat[np.ix_(most_common_obj_ids, good_image_ids)]
+
+    obj_id_map = {sorted(most_common_obj_ids)[idx]: idx + 1 for idx in range(150)}
+    obj_id_map[-1] = 0
 
     train_image_ids = []
     test_image_ids = []
@@ -124,7 +114,7 @@ def get_data(batch_size):
     testing_data = SegmentationDataset(test_image_ids, './', index_ade20k, transform=transform, target_transform=target_transform)
     test_dataloader = DataLoader(testing_data, batch_size=batch_size, shuffle=False)
 
-    return train_dataloader, test_dataloader
+    return train_dataloader, test_dataloader, obj_id_map
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -136,7 +126,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     device = torch.device('cuda:0' if args.device == 'gpu' else 'cpu')
-    train_dataloader, test_dataloader = get_data(args.batch_size)
+    load_data_start = time.time()
+    train_dataloader, test_dataloader, obj_id_map = get_data(args.batch_size)
+    print("Loaded data. ({} sec.)".format(time.time() - load_data_start))
 
     num = len(os.listdir('runs'))+1
     result_path = 'runs/run_{}'.format(num)
@@ -151,6 +143,7 @@ if __name__ == '__main__':
         print('\n' + '#'*100)
         print('Epoch {}'.format(i+1))
         print('#'*100 + '\n')
+        epoch_start = time.time()
 
         # training pass
         running_loss = 0
@@ -159,37 +152,31 @@ if __name__ == '__main__':
             labels = labels.to(device)
             optimizer.zero_grad()
             output = model(images)['out']
-            labels = encode_label(labels).to(device)
+            labels = encode_label(labels, obj_id_map).to(device)
             loss = criterion(output, labels)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
             print('Batch finished...')
         print('Training loss: {}'.format(running_loss/len(train_dataloader)))
+        print("Training time: {} seconds".format(time.time() - epoch_start))
         torch.save(model.state_dict(), result_path+'/epochs_{}_weights.pkl'.format(i+1))
 
         # testing pass
+        test_start = time.time()
         with torch.no_grad():
             for images, labels in test_dataloader:
                 images = images.to(device)
                 output = model(images)['out']
-                labels = encode_label(labels).to(device)
+                labels = encode_label(labels, obj_id_map).to(device)
                 probs = torch.nn.functional.softmax(output, dim=1)
                 preds = torch.argmax(probs, dim=1, keepdim=True)
                 num_correct = torch.sum((preds == labels).to(int)).item()
                 print('Testing accuracy: {}'.format(num_correct/(224*224*len(images))))
+        print("Testing time: {} seconds".format(time.time() - test_start))
 
-    print("DONE TRAINING!")
-
-
-
-
-
-
-
-
-
-
-
-
-
+        print("Epoch completed in {} seconds.".format(time.time() - epoch_start))
+    
+    print('\n' + '#'*100)
+    print("DONE TRAINING in {} seconds.".format(time.time() - load_data_start))
+    print('#'*100 + '\n')
