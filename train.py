@@ -70,7 +70,7 @@ def encode_label(label_arr):
     for b in range(B):
         for h in range(H):
             for w in range(W):
-                class_id = label_arr[b, 0, h, w].numpy()
+                class_id = label_arr[b, 0, h, w].cpu().numpy()
                 new_obj_idx = obj_id_map[class_id - 1]
                 encoded_label[b, h, w] = new_obj_idx
     
@@ -119,9 +119,9 @@ def get_data(batch_size):
                     transforms.ToTensor()
                 ])
 
-    training_data = SegmentationDataset(train_image_ids[:4], './', index_ade20k, transform=transform, target_transform=target_transform)
+    training_data = SegmentationDataset(train_image_ids, './', index_ade20k, transform=transform, target_transform=target_transform)
     train_dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=False)
-    testing_data = SegmentationDataset(test_image_ids[:4], './', index_ade20k, transform=transform, target_transform=target_transform)
+    testing_data = SegmentationDataset(test_image_ids, './', index_ade20k, transform=transform, target_transform=target_transform)
     test_dataloader = DataLoader(testing_data, batch_size=batch_size, shuffle=False)
 
     return train_dataloader, test_dataloader
@@ -155,32 +155,29 @@ if __name__ == '__main__':
         # training pass
         running_loss = 0
         for images, labels in train_dataloader:
-            if torch.cuda.is_available():
-                images = images.to(device)
-                labels = labels.to(device)
+            images = images.to(device)
+            labels = labels.to(device)
             optimizer.zero_grad()
             output = model(images)['out']
-            labels = encode_label(labels)
+            labels = encode_label(labels).to(device)
             loss = criterion(output, labels)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
+            print('Batch finished...')
         print('Training loss: {}'.format(running_loss/len(train_dataloader)))
         torch.save(model.state_dict(), result_path+'/epochs_{}_weights.pkl'.format(i+1))
 
         # testing pass
-        model.eval()
-        num_pixels = 0
-        num_correct = 0
-        for images, labels in test_dataloader:
-            num_pixels += 224*224*len(images)
-            output = model(images)['out']
-            labels = encode_label(labels)
-            probs = torch.nn.functional.softmax(output, dim=1)
-            preds = torch.argmax(probs, dim=1, keepdim=True)
-            num_correct += torch.sum((preds == labels).to(int)).item()
-        print('Testing accuracy: {}'.format(num_correct/num_pixels))
-        model.train()
+        with torch.no_grad():
+            for images, labels in test_dataloader:
+                images = images.to(device)
+                output = model(images)['out']
+                labels = encode_label(labels).to(device)
+                probs = torch.nn.functional.softmax(output, dim=1)
+                preds = torch.argmax(probs, dim=1, keepdim=True)
+                num_correct = torch.sum((preds == labels).to(int)).item()
+                print('Testing accuracy: {}'.format(num_correct/(224*224*len(images))))
 
     print("DONE TRAINING!")
 
