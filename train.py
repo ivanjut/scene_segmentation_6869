@@ -9,6 +9,7 @@ import pickle as pkl
 import torchvision
 from torchvision import models, transforms, io
 from torch.utils.data import Dataset, DataLoader
+from sklearn.metrics import jaccard_similarity_score as IOU
 import utils
 import os
 import sys
@@ -176,6 +177,8 @@ if __name__ == '__main__':
 
         # testing pass
         test_start = time.time()
+        running_accuracy = 0
+        running_iou = 0
         with torch.no_grad():
             for images, labels in test_dataloader:
                 images = images.to(device)
@@ -184,8 +187,14 @@ if __name__ == '__main__':
                 probs = torch.nn.functional.softmax(output, dim=1)
                 preds = torch.argmax(probs, dim=1, keepdim=True)
                 num_correct = torch.sum((preds == labels).to(int)).item()
+                iou = IOU(labels.detach().numpy().reshape(-1), preds.detach().numpy().reshape(-1))
                 logger.info('Testing accuracy: {}'.format(num_correct/(224*224*len(images))))
+                logger.info('Testing IOU score: {}'.format(iou))
+                running_accuracy += num_correct/(224*224*len(images))
+                running_iou += iou
         logger.info("Testing time: {} seconds".format(time.time() - test_start))
+        logger.info('-----> Overall testing pixel accuracy: {}'.format(running_accuracy / len(test_dataloader)))
+        logger.info('-----> Overall testing IOU accuracy: {}'.format(running_iou / len(test_dataloader)))
         logger.info("Epoch completed in {} seconds.".format(time.time() - epoch_start))
     
     logger.info('#'*30)
