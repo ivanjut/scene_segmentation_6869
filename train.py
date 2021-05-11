@@ -170,7 +170,7 @@ if __name__ == '__main__':
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-            logger.info('Batch finished...')
+            logger.info('Batch loss: {}'.format(loss.item()))
         logger.info('Training loss: {}'.format(running_loss/len(train_dataloader)))
         logger.info("Training time: {} seconds".format(time.time() - epoch_start))
         torch.save(model.state_dict(), result_path+'/epochs_{}_weights.pkl'.format(i+1))
