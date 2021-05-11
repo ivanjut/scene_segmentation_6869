@@ -11,8 +11,9 @@ from torchvision import models, transforms, io
 from torch.utils.data import Dataset, DataLoader
 import utils
 import os
+import sys
 import time
-
+import logging
 
 class SegmentationDataset(Dataset):
     def __init__(self, image_ids, root_dir, index_mat, transform=None, target_transform=None):
@@ -58,7 +59,7 @@ def encode_label(label_arr, obj_id_map):
     """
     convert_label_ids = lambda i: obj_id_map[i-1]
     vect_convert_label_ids = np.vectorize(convert_label_ids)
-    encoded_label = vect_convert_label_ids(label_arr.squeeze().numpy())
+    encoded_label = vect_convert_label_ids(label_arr.squeeze().cpu().numpy())
     
     return torch.tensor(encoded_label, dtype=torch.long)
 
@@ -133,16 +134,27 @@ if __name__ == '__main__':
     num = len(os.listdir('runs'))+1
     result_path = 'runs/run_{}'.format(num)
     os.makedirs(result_path)
-
+    logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)-8s %(message)s',
+                    datefmt='%d %H:%M',
+                    filename='{}/out.log'.format(result_path),
+                    filemode='w')
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)-8s %(message)s')
+    console.setFormatter(formatter)
+    logging.getLogger('').addHandler(console)
+    logger = logging.getLogger('general_output')
+    
     model = models.segmentation.fcn_resnet50(pretrained=False, num_classes=151).to(device)
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     criterion = torch.nn.CrossEntropyLoss()
-
+    
     for i in range(args.epochs):
 
-        print('\n' + '#'*100)
-        print('Epoch {}'.format(i+1))
-        print('#'*100 + '\n')
+        logger.info('#'*30)
+        logger.info('Epoch {}'.format(i+1))
+        logger.info('#'*30)
         epoch_start = time.time()
 
         # training pass
@@ -157,9 +169,9 @@ if __name__ == '__main__':
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-            print('Batch finished...')
-        print('Training loss: {}'.format(running_loss/len(train_dataloader)))
-        print("Training time: {} seconds".format(time.time() - epoch_start))
+            logger.info('Batch finished...')
+        logger.info('Training loss: {}'.format(running_loss/len(train_dataloader)))
+        logger.info("Training time: {} seconds".format(time.time() - epoch_start))
         torch.save(model.state_dict(), result_path+'/epochs_{}_weights.pkl'.format(i+1))
 
         # testing pass
@@ -172,11 +184,10 @@ if __name__ == '__main__':
                 probs = torch.nn.functional.softmax(output, dim=1)
                 preds = torch.argmax(probs, dim=1, keepdim=True)
                 num_correct = torch.sum((preds == labels).to(int)).item()
-                print('Testing accuracy: {}'.format(num_correct/(224*224*len(images))))
-        print("Testing time: {} seconds".format(time.time() - test_start))
-
-        print("Epoch completed in {} seconds.".format(time.time() - epoch_start))
+                logger.info('Testing accuracy: {}'.format(num_correct/(224*224*len(images))))
+        logger.info("Testing time: {} seconds".format(time.time() - test_start))
+        logger.info("Epoch completed in {} seconds.".format(time.time() - epoch_start))
     
-    print('\n' + '#'*100)
-    print("DONE TRAINING in {} seconds.".format(time.time() - load_data_start))
-    print('#'*100 + '\n')
+    logger.info('#'*30)
+    logger.info("DONE TRAINING in {} seconds.".format(time.time() - load_data_start))
+    logger.info('#'*30)
