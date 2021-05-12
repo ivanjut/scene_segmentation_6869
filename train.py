@@ -1,5 +1,6 @@
 from PIL import Image
 import argparse
+import json
 import cv2
 import matplotlib.pyplot as plt
 import torch
@@ -9,7 +10,8 @@ import pickle as pkl
 import torchvision
 from torchvision import models, transforms, io
 from torch.utils.data import Dataset, DataLoader
-from sklearn.metrics import jaccard_similarity_score as IOU
+from torch.utils.tensorboard import SummaryWriter
+from sklearn.metrics import jaccard_score as IOU
 import utils
 import os
 import sys
@@ -135,6 +137,8 @@ if __name__ == '__main__':
     num = len(os.listdir('runs'))+1
     result_path = 'runs/run_{}'.format(num)
     os.makedirs(result_path)
+    with open('{}/args.json'.format(result_path), 'w') as argfile:
+        json.dump(vars(args), argfile)
     logging.basicConfig(level=logging.INFO,
                     format='%(asctime)-8s %(message)s',
                     datefmt='%d %H:%M',
@@ -146,11 +150,13 @@ if __name__ == '__main__':
     console.setFormatter(formatter)
     logging.getLogger('').addHandler(console)
     logger = logging.getLogger('general_output')
+    writer = SummaryWriter(log_dir=result_path)
     
     model = models.segmentation.fcn_resnet50(pretrained=False, num_classes=151).to(device)
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     criterion = torch.nn.CrossEntropyLoss()
     
+    batches = 0
     for i in range(args.epochs):
 
         logger.info('#'*30)
@@ -171,8 +177,11 @@ if __name__ == '__main__':
             optimizer.step()
             running_loss += loss.item()
             logger.info('Batch loss: {}'.format(loss.item()))
+            writer.add_scalar('Batch loss', loss.item(), batches)
+            batches += 1
         logger.info('Training loss: {}'.format(running_loss/len(train_dataloader)))
         logger.info("Training time: {} seconds".format(time.time() - epoch_start))
+        writer.add_scalar('Epoch loss', running_loss/len(train_dataloader), i)
         torch.save(model.state_dict(), result_path+'/epochs_{}_weights.pkl'.format(i+1))
 
         # testing pass
@@ -185,9 +194,9 @@ if __name__ == '__main__':
                 output = model(images)['out']
                 labels = encode_label(labels, obj_id_map).to(device)
                 probs = torch.nn.functional.softmax(output, dim=1)
-                preds = torch.argmax(probs, dim=1, keepdim=True)
+                preds = torch.argmax(probs, dim=1, keepdim=True).squeeze()
                 num_correct = torch.sum((preds == labels).to(int)).item()
-                iou = IOU(labels.detach().numpy().reshape(-1), preds.detach().numpy().reshape(-1))
+                iou = IOU(labels.detach().cpu().numpy().reshape(-1), preds.detach().cpu().numpy().reshape(-1), average='weighted')
                 logger.info('Testing accuracy: {}'.format(num_correct/(224*224*len(images))))
                 logger.info('Testing IOU score: {}'.format(iou))
                 running_accuracy += num_correct/(224*224*len(images))
@@ -195,7 +204,11 @@ if __name__ == '__main__':
         logger.info("Testing time: {} seconds".format(time.time() - test_start))
         logger.info('-----> Overall testing pixel accuracy: {}'.format(running_accuracy / len(test_dataloader)))
         logger.info('-----> Overall testing IOU accuracy: {}'.format(running_iou / len(test_dataloader)))
-        logger.info("Epoch completed in {} seconds.".format(time.time() - epoch_start))
+        writer.add_scalar('Pixel acc', running_accuracy/len(test_dataloader), i)
+        writer.add_scalar('IOU', running_iou/len(test_dataloader), i)
+        epoch_duration = time.time() - epoch_start
+        logger.info("Epoch completed in {} seconds.".format(epoch_duration))
+        writer.add_scalar('Epoch duration', epoch_duration, i)
     
     logger.info('#'*30)
     logger.info("DONE TRAINING in {} seconds.".format(time.time() - load_data_start))
