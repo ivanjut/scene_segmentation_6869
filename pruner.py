@@ -48,6 +48,9 @@ def get_parameter_size(model):
 
 def train_model(model, train_dataloader, test_dataloader, obj_id_map, epochs=20, lr=0.01, momentum=0.8):
     train_start = time.time()
+
+    ########### TODO: set up directory for storing weights
+    ########### TODO: configure logging and remove print statements
     # num = len(os.listdir('runs'))+1
     # result_path = 'runs/prune_run_{}'.format(num)
     # os.makedirs(result_path)
@@ -124,6 +127,7 @@ def train_model(model, train_dataloader, test_dataloader, obj_id_map, epochs=20,
 
 
 def validate(model, test_dataloader):
+    ######## TODO: once logging is set up, remove print statements
     # testing pass
     test_start = time.time()
     running_accuracy = 0
@@ -194,7 +198,7 @@ if __name__ == '__main__':
         validation_metrics = validate(model_to_prune, test_dataloader)
 
 
-        ########## TODO: save these to JSON?
+        ########## TODO: save these to JSON? - can remove print statements for logging
         print("*" * 10, "Threshold {}".format(thresh), "*" * 10)
         print("SIZE: ", pruned_model_size)
         print("ACCURACIES: ", validation_metrics)
