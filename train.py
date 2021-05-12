@@ -127,6 +127,7 @@ if __name__ == '__main__':
     parser.add_argument('-lr', default=0.01, type=float, help='The learning rate to use')
     parser.add_argument('-momentum', default=0.0, type=float, help='The momentum factor to use')
     parser.add_argument('-batch_size', default=32, type=int, help='Number of samples in a batch')
+    parser.add_argument('-model', type=str, help='Model class to use')
     args = parser.parse_args()
 
     device = torch.device('cuda:0' if args.device == 'gpu' else 'cpu')
@@ -152,7 +153,19 @@ if __name__ == '__main__':
     logger = logging.getLogger('general_output')
     writer = SummaryWriter(log_dir=result_path)
     
-    model = models.segmentation.fcn_resnet50(pretrained=False, num_classes=151).to(device)
+    if args.model == 'fcn_resnet_50':
+        model = models.segmentation.fcn_resnet50(pretrained=False, num_classes=151).to(device)
+    elif args.model == 'fcn_resnet_101':
+        model = models.segmentation.fcn_resnet101(pretrained=False, num_classes=151).to(device)
+    elif args.model == 'deeplab_resnet_50':
+        model = models.segmentation.deeplabv3_resnet50(pretrained=False, num_classes=151).to(device)
+    elif args.model == 'deeplab_resnet_101':
+        model = models.segmentation.deeplabv3_resnet101(pretrained=False, num_classes=151).to(device)
+    elif args.model == 'deeplab_mobilenet_v3_large':
+        model = models.segmentation.deeplabv3_mobilenet_v3_large(pretrained=False, num_classes=151).to(device)
+    elif args.model == 'lraspp':
+        model = models.segmentation.lraspp_mobilenet_v3_large(pretrained=False, num_classes=151).to(device)
+
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     criterion = torch.nn.CrossEntropyLoss()
     
