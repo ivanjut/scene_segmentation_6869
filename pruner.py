@@ -40,7 +40,7 @@ def get_parameter_size(model):
     for p in model.parameters():
         num_params += torch.count_nonzero(p.flatten())
         
-    total_bytes = num_params.item() / 4
+    total_bytes = num_params.item() * 4
     kb = total_bytes / 1000
     
     return {"# Params": num_params.item(),
