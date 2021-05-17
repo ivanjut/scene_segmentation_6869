@@ -68,7 +68,8 @@ def train_model(model, teacher_models, train_dataloader, test_dataloader, obj_id
 
     model = model.to(device)
     optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=momentum)
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion_soft = torch.nn.CrossEntropyLoss()
+    criterion_hard = torch.nn.CrossEntropyLoss()
     
     for i in range(epochs):
 
@@ -79,7 +80,7 @@ def train_model(model, teacher_models, train_dataloader, test_dataloader, obj_id
 
         # training pass
         running_loss = 0
-        for images, _ in train_dataloader:
+        for images, labels in train_dataloader:
             images = images.to(device)
             optimizer.zero_grad()
 
@@ -92,10 +93,12 @@ def train_model(model, teacher_models, train_dataloader, test_dataloader, obj_id
                 full_tensor = full_tensor.add(soft_label)
             soft_label_outputs = torch.div(full_tensor, len(teacher_models))
             label_probs = torch.nn.functional.softmax(soft_label_outputs, dim=1)
-            labels = torch.argmax(label_probs, dim=1, keepdim=True).squeeze()
+            soft_labels = torch.argmax(label_probs, dim=1, keepdim=True).squeeze()
 
             output = model(images)['out']
-            loss = criterion(output, labels)
+            loss_soft = criterion_soft(output, soft_labels)
+            loss_hard = criterion_hard(output, train.encode_label(labels, obj_id_map).to(device))
+            loss = sum([loss_soft * 0.5, loss_hard * 0.5])
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
