@@ -113,9 +113,9 @@ def get_data(batch_size):
                     transforms.ToTensor()
                 ])
 
-    training_data = SegmentationDataset(train_image_ids, './', index_ade20k, transform=transform, target_transform=target_transform)
+    training_data = SegmentationDataset(train_image_ids[:4], './', index_ade20k, transform=transform, target_transform=target_transform)
     train_dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=False)
-    testing_data = SegmentationDataset(test_image_ids, './', index_ade20k, transform=transform, target_transform=target_transform)
+    testing_data = SegmentationDataset(test_image_ids[:4], './', index_ade20k, transform=transform, target_transform=target_transform)
     test_dataloader = DataLoader(testing_data, batch_size=batch_size, shuffle=False)
 
     return train_dataloader, test_dataloader, obj_id_map
