@@ -185,12 +185,12 @@ if __name__ == '__main__':
         model = models.segmentation.deeplabv3_mobilenet_v3_large(pretrained=False, num_classes=151).to(device)
     elif args.model == 'lraspp':
         model = models.segmentation.lraspp_mobilenet_v3_large(pretrained=False, num_classes=151).to(device)
-        
+
     model.load_state_dict(torch.load(args.weights_file, map_location=device))
     model_size = get_parameter_size(model)
     print("Original model size: ", model_size)
 
-    thresholds = [0.0025, 0.01, 0.025, 0.1]
+    thresholds = [0.001, 0.0025, 0.01, 0.025, 0.1]
     for thresh in thresholds:
 
         # Make copy of model
