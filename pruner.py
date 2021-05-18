@@ -9,6 +9,7 @@ import pickle as pkl
 import torchvision
 from torchvision import models, transforms, io
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from sklearn.metrics import jaccard_score as IOU
 import torch.nn.utils.prune as prune
 import utils
@@ -38,7 +39,7 @@ def get_parameter_size(model):
     """
     num_params = 0
     for p in model.parameters():
-        num_params += torch.count_nonzero(p.flatten())
+        num_params += torch.count_nonzero(p.flatten().detach())
         
     total_bytes = num_params.item() / 4
     kb = total_bytes / 1000
@@ -64,11 +65,13 @@ def train_model(model, train_dataloader, test_dataloader, obj_id_map, epochs=20,
     console.setFormatter(formatter)
     logging.getLogger('').addHandler(console)
     logger = logging.getLogger('general_output')
+    writer = SummaryWriter(log_dir=result_path)
 
     model = model.to(device)
     optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=momentum)
     criterion = torch.nn.CrossEntropyLoss()
     
+    batches = 0
     for i in range(epochs):
 
         logger.info('#'*30)
@@ -88,10 +91,14 @@ def train_model(model, train_dataloader, test_dataloader, obj_id_map, epochs=20,
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-            logger.info('Batch finished...')
+            logger.info('Batch loss: {}'.format(loss.item()))
+            writer.add_scalar('Batch loss', loss.item(), batches)
+            batches += 1
         logger.info('Training loss: {}'.format(running_loss/len(train_dataloader)))
         logger.info("Training time: {} seconds".format(time.time() - epoch_start))
-        torch.save(model, result_path+'/epochs_{}_model.pkl'.format(i+1))
+        writer.add_scalar('Epoch loss', running_loss/len(train_dataloader), i)
+        if i+1 == epochs:
+            torch.save(model, result_path+'/epochs_{}_model.pkl'.format(i+1))
 
         # testing pass
         test_start = time.time()
@@ -113,7 +120,11 @@ def train_model(model, train_dataloader, test_dataloader, obj_id_map, epochs=20,
         logger.info("Testing time: {} seconds".format(time.time() - test_start))
         logger.info('-----> Overall testing pixel accuracy: {}'.format(running_accuracy / len(test_dataloader)))
         logger.info('-----> Overall testing IOU accuracy: {}'.format(running_iou / len(test_dataloader)))
-        logger.info("Epoch completed in {} seconds.".format(time.time() - epoch_start))
+        writer.add_scalar('Pixel acc', running_accuracy/len(test_dataloader), i)
+        writer.add_scalar('IOU', running_iou/len(test_dataloader), i)
+        epoch_duration = time.time() - epoch_start
+        logger.info("Epoch completed in {} seconds.".format(epoch_duration))
+        writer.add_scalar('Epoch duration', epoch_duration, i)
     
     logger.info('#'*30)
     logger.info("DONE TRAINING in {} seconds.".format(time.time() - train_start))
@@ -161,12 +172,12 @@ if __name__ == '__main__':
     print("Loaded data. ({} sec.)".format(time.time() - load_data_start))
 
     # Load trained weights from pkl file
-    model = models.segmentation.fcn_resnet50(pretrained=False, num_classes=151).to(device)
-    model.load_state_dict(torch.load('../epochs_20_weights.pkl', map_location=device))
+    model = models.segmentation.deeplabv3_resnet50(pretrained=False, num_classes=151).to(device)
+    model.load_state_dict(torch.load(args.weights_file, map_location=device))
     model_size = get_parameter_size(model)
     print("Original model size: ", model_size)
 
-    thresholds = [0.001, 0.0025, 0.01, 0.025, 0.1]
+    thresholds = [0.0025, 0.01, 0.025, 0.1]
     for thresh in thresholds:
 
         # Make copy of model
@@ -192,13 +203,13 @@ if __name__ == '__main__':
         model_to_prune = train_model(model_to_prune, train_dataloader, test_dataloader, obj_id_map)
         validation_metrics = validate(model_to_prune, test_dataloader)
 
-        results_dirpath = 'runs/prune/pruned_validation_results'
+        results_dirpath = 'runs/prune/pruned_{}_validation_results'.format(thresh)
         os.makedirs(results_dirpath)
         results = {
             "size": pruned_model_size,
             "accuracies": validation_metrics
         }
-        with open(results_dirpath + "/fcn_thresh_{}.json", 'w') as fp:
+        with open(results_dirpath + "/fcn_thresh_{}.json".format(thresh), 'w') as fp:
             json.dump(results, fp)
 
 
