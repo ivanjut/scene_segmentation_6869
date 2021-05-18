@@ -39,7 +39,7 @@ def get_parameter_size(model):
     """
     num_params = 0
     for p in model.parameters():
-        num_params += torch.count_nonzero(p.flatten())
+        num_params += torch.count_nonzero(p.flatten().detach())
         
     total_bytes = num_params.item() * 4
     kb = total_bytes / 1000
