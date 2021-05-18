@@ -123,9 +123,9 @@ def get_data(batch_size):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-device', default='gpu', type=str, help='Whether you are using GPU or CPU')
-    parser.add_argument('-epochs', default=10, type=int, help='Number of learning epochs')
+    parser.add_argument('-epochs', default=20, type=int, help='Number of learning epochs')
     parser.add_argument('-lr', default=0.01, type=float, help='The learning rate to use')
-    parser.add_argument('-momentum', default=0.0, type=float, help='The momentum factor to use')
+    parser.add_argument('-momentum', default=0.8, type=float, help='The momentum factor to use')
     parser.add_argument('-batch_size', default=32, type=int, help='Number of samples in a batch')
     parser.add_argument('-model', type=str, help='Model class to use')
     args = parser.parse_args()
@@ -195,7 +195,8 @@ if __name__ == '__main__':
         logger.info('Training loss: {}'.format(running_loss/len(train_dataloader)))
         logger.info("Training time: {} seconds".format(time.time() - epoch_start))
         writer.add_scalar('Epoch loss', running_loss/len(train_dataloader), i)
-        torch.save(model.state_dict(), result_path+'/epochs_{}_weights.pkl'.format(i+1))
+        if i+1 == 20:
+            torch.save(model.state_dict(), result_path+'/epochs_{}_weights.pkl'.format(i+1))
 
         # testing pass
         test_start = time.time()

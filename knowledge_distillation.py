@@ -39,7 +39,7 @@ def get_parameter_size(model):
     """
     num_params = 0
     for p in model.parameters():
-        num_params += torch.count_nonzero(p.flatten().detach())
+        num_params += torch.count_nonzero(p.flatten())
         
     total_bytes = num_params.item() * 4
     kb = total_bytes / 1000
@@ -48,11 +48,12 @@ def get_parameter_size(model):
             "Size in KB": kb}
 
 
-def train_model(model, train_dataloader, test_dataloader, obj_id_map, epochs=20, lr=0.01, momentum=0.8):
+def train_model(model, teacher_models, train_dataloader, test_dataloader, obj_id_map, device, epochs=20, lr=0.01, momentum=0.8):
     train_start = time.time()
 
-    num = len(os.listdir('runs/prune/'))+1
-    result_path = 'runs/prune/prune_run_{}'.format(num)
+    # TODO: configure save directory - I messed this up last time
+    num = len(os.listdir('runs/kd/'))+1
+    result_path = 'runs/kd/kd_run_{}'.format(num)
     os.makedirs(result_path)
     logging.basicConfig(level=logging.INFO,
                     format='%(asctime)-8s %(message)s',
@@ -69,7 +70,8 @@ def train_model(model, train_dataloader, test_dataloader, obj_id_map, epochs=20,
 
     model = model.to(device)
     optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=momentum)
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion_soft = torch.nn.CrossEntropyLoss()
+    criterion_hard = torch.nn.CrossEntropyLoss()
     
     batches = 0
     for i in range(epochs):
@@ -83,21 +85,33 @@ def train_model(model, train_dataloader, test_dataloader, obj_id_map, epochs=20,
         running_loss = 0
         for images, labels in train_dataloader:
             images = images.to(device)
-            labels = labels.to(device)
             optimizer.zero_grad()
+
+            shape, full_tensor = None, None
+            for tm in teacher_models:
+                soft_label = tm(images)['out']
+                if shape is None:
+                    shape = soft_label.size()
+                    full_tensor = torch.zeros(shape)
+                full_tensor = full_tensor.add(soft_label)
+            soft_label_outputs = torch.div(full_tensor, len(teacher_models))
+            label_probs = torch.nn.functional.softmax(soft_label_outputs, dim=1)
+            soft_labels = torch.argmax(label_probs, dim=1, keepdim=True).squeeze()
+
             output = model(images)['out']
-            labels = train.encode_label(labels, obj_id_map).to(device)
-            loss = criterion(output, labels)
+            loss_soft = criterion_soft(output, soft_labels)
+            loss_hard = criterion_hard(output, train.encode_label(labels, obj_id_map).to(device))
+            loss = sum([loss_soft * 0.5, loss_hard * 0.5])
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-            logger.info('Batch loss: {}'.format(loss.item()))
+            logger.info('Batch finished: {}'.format(loss.item()))
             writer.add_scalar('Batch loss', loss.item(), batches)
             batches += 1
         logger.info('Training loss: {}'.format(running_loss/len(train_dataloader)))
         logger.info("Training time: {} seconds".format(time.time() - epoch_start))
         writer.add_scalar('Epoch loss', running_loss/len(train_dataloader), i)
-        if i+1 == epochs:
+        if i+1 == 20:
             torch.save(model, result_path+'/epochs_{}_model.pkl'.format(i+1))
 
         # testing pass
@@ -130,10 +144,10 @@ def train_model(model, train_dataloader, test_dataloader, obj_id_map, epochs=20,
     logger.info("DONE TRAINING in {} seconds.".format(time.time() - train_start))
     logger.info('#'*30)
 
-    return model
+    return model, result_path
 
 
-def validate(model, test_dataloader):
+def validate(model, test_dataloader, device):
     # testing pass
     test_start = time.time()
     running_accuracy = 0
@@ -147,12 +161,11 @@ def validate(model, test_dataloader):
             preds = torch.argmax(probs, dim=1, keepdim=True).squeeze()
             num_correct = torch.sum((preds == labels).to(int)).item()
             iou = IOU(labels.detach().cpu().numpy().reshape(-1), preds.detach().cpu().numpy().reshape(-1), average='weighted')
-            # logger.info('Testing accuracy: {}'.format(num_correct/(224*224*len(images))))
-            # logger.info('Testing IOU score: {}'.format(iou))
+            logger.info('Testing accuracy: {}'.format(num_correct/(224*224*len(images))))
+            logger.info('Testing IOU score: {}'.format(iou))
             running_accuracy += num_correct/(224*224*len(images))
             running_iou += iou
-    # logger.info("Testing time: {} seconds".format(time.time() - test_start))
-    # print("Testing time: {} seconds".format(time.time() - test_start))
+    logger.info("Testing time: {} seconds".format(time.time() - test_start))
 
     return {"Testing pixel accuracy": running_accuracy / len(test_dataloader),
             "Testing IOU accuracy": running_iou / len(test_dataloader)}
@@ -161,7 +174,7 @@ def validate(model, test_dataloader):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-device', default='gpu', type=str, help='Whether you are using GPU or CPU')
-    parser.add_argument('-weights_file', default='', type=str, help='Path to weights pickle file')
+    # parser.add_argument('-model', default='fcn_resnet_50', type=str, help='Model to train with KD')
     # parser.add_argument('-thresh', default=0.1, type=float, help='Threshold of weights to prune')
     parser.add_argument('-batch_size', default=32, type=int, help='Number of samples in a batch')
     args = parser.parse_args()
@@ -171,46 +184,35 @@ if __name__ == '__main__':
     train_dataloader, test_dataloader, obj_id_map = train.get_data(args.batch_size)
     print("Loaded data. ({} sec.)".format(time.time() - load_data_start))
 
-    # Load trained weights from pkl file
-    model = models.segmentation.deeplabv3_resnet50(pretrained=False, num_classes=151).to(device)
-    model.load_state_dict(torch.load(args.weights_file, map_location=device))
+    # Load teacher models
+    teacher_model_1 = models.segmentation.fcn_resnet50(pretrained=False, num_classes=151).to(device)
+    teacher_model_1.load_state_dict(torch.load('../models/fcn_resnet_50/epochs_20_weights.pkl', map_location=device))
+    teacher_model_2 = models.segmentation.deeplabv3_resnet50(pretrained=False, num_classes=151).to(device)
+    teacher_model_2.load_state_dict(torch.load('../models/deeplab_resnet_50/epochs_20_weights.pkl', map_location=device))
+    teacher_models = [teacher_model_1, teacher_model_2]
+
+    # Load pruned model architecture for retraining
+    model = copy.deepcopy(teacher_model_1) # fcn resnet 50
+    params_to_prune = [(module, "weight") for _, module in model.named_modules() if isinstance(module, torch.nn.Conv2d)]
+    prune.global_unstructured(params_to_prune, pruning_method=ThresholdPruning, threshold=0.025)
+    for _, module in model.named_modules():
+        if isinstance(module, torch.nn.Conv2d):
+            prune.remove(module, 'weight')
+
+    model, result_path = train_model(model, teacher_models, train_dataloader, test_dataloader, obj_id_map, device=device)
+
     model_size = get_parameter_size(model)
-    print("Original model size: ", model_size)
-
-    thresholds = [0.0025, 0.01, 0.025, 0.1]
-    for thresh in thresholds:
-
-        # Make copy of model
-        model_to_prune = copy.deepcopy(model)
-        # matching_flag = True
-        # for p1, p2 in zip(model.parameters(), model_to_prune.parameters()):
-        #     if p1.data.ne(p2.data).sum() > 0:
-        #         matching_flag = False
-        # assert matching_flag is True
-
-        # Prune
-        params_to_prune = [(module, "weight") for _, module in model_to_prune.named_modules() if isinstance(module, torch.nn.Conv2d)]
-
-        prune.global_unstructured(params_to_prune, pruning_method=ThresholdPruning, threshold=thresh)
-
-        for _, module in model_to_prune.named_modules():
-            if isinstance(module, torch.nn.Conv2d):
-                prune.remove(module, 'weight')
-
-        pruned_model_size = get_parameter_size(model_to_prune)
         
-        # Retrain pruned model
-        model_to_prune = train_model(model_to_prune, train_dataloader, test_dataloader, obj_id_map)
-        validation_metrics = validate(model_to_prune, test_dataloader)
+    validation_metrics = validate(model, test_dataloader, device)
 
-        results_dirpath = 'runs/prune/pruned_{}_validation_results'.format(thresh)
-        os.makedirs(results_dirpath)
-        results = {
-            "size": pruned_model_size,
-            "accuracies": validation_metrics
-        }
-        with open(results_dirpath + "/fcn_thresh_{}.json".format(thresh), 'w') as fp:
-            json.dump(results, fp)
+    print(model_size)
+    print(validation_metrics)
+    results = {
+        "size": model_size,
+        "accuracies": validation_metrics
+    }
+    with open(result_path + "/fcn_kd.json", 'w') as fp:
+        json.dump(results, fp)
 
 
     
