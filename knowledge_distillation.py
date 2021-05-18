@@ -92,14 +92,14 @@ def train_model(model, teacher_models, train_dataloader, test_dataloader, obj_id
                 soft_label = tm(images)['out']
                 if shape is None:
                     shape = soft_label.size()
-                    full_tensor = torch.zeros(shape)
+                    full_tensor = torch.zeros(shape).to(device)
                 full_tensor = full_tensor.add(soft_label)
             soft_label_outputs = torch.div(full_tensor, len(teacher_models))
             label_probs = torch.nn.functional.softmax(soft_label_outputs, dim=1)
             soft_labels = torch.argmax(label_probs, dim=1, keepdim=True).squeeze()
 
             output = model(images)['out']
-            loss_soft = criterion_soft(output, soft_labels)
+            loss_soft = criterion_soft(output, soft_labels.to(device))
             loss_hard = criterion_hard(output, train.encode_label(labels, obj_id_map).to(device))
             loss = sum([loss_soft * 0.5, loss_hard * 0.5])
             loss.backward()
@@ -186,9 +186,9 @@ if __name__ == '__main__':
 
     # Load teacher models
     teacher_model_1 = models.segmentation.fcn_resnet50(pretrained=False, num_classes=151).to(device)
-    teacher_model_1.load_state_dict(torch.load('../models/fcn_resnet_50/epochs_20_weights.pkl', map_location=device))
+    teacher_model_1.load_state_dict(torch.load('./models/fcn_resnet_50/epochs_20_weights.pkl', map_location=device))
     teacher_model_2 = models.segmentation.deeplabv3_resnet50(pretrained=False, num_classes=151).to(device)
-    teacher_model_2.load_state_dict(torch.load('../models/deeplab_resnet_50/epochs_20_weights.pkl', map_location=device))
+    teacher_model_2.load_state_dict(torch.load('./models/deeplab_resnet_50/epochs_20_weights.pkl', map_location=device))
     teacher_models = [teacher_model_1, teacher_model_2]
 
     # Load pruned model architecture for retraining
