@@ -179,9 +179,9 @@ if __name__ == '__main__':
 
     # Load teacher models
     teacher_model_1 = models.segmentation.fcn_resnet50(pretrained=False, num_classes=151).to(device)
-    teacher_model_1.load_state_dict(torch.load('../scene_seg_models/fcn_resnet_50/epochs_20_weights.pkl', map_location=device))
+    teacher_model_1.load_state_dict(torch.load('../models/fcn_resnet_50/epochs_20_weights.pkl', map_location=device))
     teacher_model_2 = models.segmentation.deeplabv3_resnet50(pretrained=False, num_classes=151).to(device)
-    teacher_model_2.load_state_dict(torch.load('../scene_seg_models/deeplab_resnet_50/epochs_20_weights.pkl', map_location=device))
+    teacher_model_2.load_state_dict(torch.load('../models/deeplab_resnet_50/epochs_20_weights.pkl', map_location=device))
     teacher_models = [teacher_model_1, teacher_model_2]
 
     # Load pruned model architecture for retraining
