@@ -9,6 +9,7 @@ import pickle as pkl
 import torchvision
 from torchvision import models, transforms, io
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from sklearn.metrics import jaccard_score as IOU
 import torch.nn.utils.prune as prune
 import utils
@@ -47,35 +48,37 @@ def get_parameter_size(model):
             "Size in KB": kb}
 
 
-def train_model(model, teacher_models, train_dataloader, test_dataloader, obj_id_map, epochs=20, lr=0.01, momentum=0.8):
+def train_model(model, teacher_models, train_dataloader, test_dataloader, obj_id_map, device, epochs=20, lr=0.01, momentum=0.8):
     train_start = time.time()
 
     # TODO: configure save directory - I messed this up last time
-    # num = len(os.listdir('runs/kd/'))+1
-    # result_path = 'runs/kd/kd_run_{}'.format(num)
-    # os.makedirs(result_path)
-    # logging.basicConfig(level=logging.INFO,
-    #                 format='%(asctime)-8s %(message)s',
-    #                 datefmt='%d %H:%M',
-    #                 filename='{}/out.log'.format(result_path),
-    #                 filemode='w')
-    # console = logging.StreamHandler()
-    # console.setLevel(logging.INFO)
-    # formatter = logging.Formatter('%(asctime)-8s %(message)s')
-    # console.setFormatter(formatter)
-    # logging.getLogger('').addHandler(console)
-    # logger = logging.getLogger('general_output')
+    num = len(os.listdir('runs/kd/'))+1
+    result_path = 'runs/kd/kd_run_{}'.format(num)
+    os.makedirs(result_path)
+    logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)-8s %(message)s',
+                    datefmt='%d %H:%M',
+                    filename='{}/out.log'.format(result_path),
+                    filemode='w')
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)-8s %(message)s')
+    console.setFormatter(formatter)
+    logging.getLogger('').addHandler(console)
+    logger = logging.getLogger('general_output')
+    writer = SummaryWriter(log_dir=result_path)
 
     model = model.to(device)
     optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=momentum)
     criterion_soft = torch.nn.CrossEntropyLoss()
     criterion_hard = torch.nn.CrossEntropyLoss()
     
+    batches = 0
     for i in range(epochs):
 
-        # logger.info('#'*30)
-        # logger.info('Epoch {}'.format(i+1))
-        # logger.info('#'*30)
+        logger.info('#'*30)
+        logger.info('Epoch {}'.format(i+1))
+        logger.info('#'*30)
         epoch_start = time.time()
 
         # training pass
@@ -102,11 +105,14 @@ def train_model(model, teacher_models, train_dataloader, test_dataloader, obj_id
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-            # logger.info('Batch finished...')
-        print('Training loss: {}'.format(running_loss/len(train_dataloader)))
-        # logger.info('Training loss: {}'.format(running_loss/len(train_dataloader)))
-        # logger.info("Training time: {} seconds".format(time.time() - epoch_start))
-        # torch.save(model, result_path+'/epochs_{}_model.pkl'.format(i+1))
+            logger.info('Batch finished: {}'.format(loss.item()))
+            writer.add_scalar('Batch loss', loss.item(), batches)
+            batches += 1
+        logger.info('Training loss: {}'.format(running_loss/len(train_dataloader)))
+        logger.info("Training time: {} seconds".format(time.time() - epoch_start))
+        writer.add_scalar('Epoch loss', running_loss/len(train_dataloader), i)
+        if i+1 == 20:
+            torch.save(model, result_path+'/epochs_{}_model.pkl'.format(i+1))
 
         # testing pass
         test_start = time.time()
@@ -121,25 +127,27 @@ def train_model(model, teacher_models, train_dataloader, test_dataloader, obj_id
                 preds = torch.argmax(probs, dim=1, keepdim=True).squeeze()
                 num_correct = torch.sum((preds == labels).to(int)).item()
                 iou = IOU(labels.detach().cpu().numpy().reshape(-1), preds.detach().cpu().numpy().reshape(-1), average='weighted')
-                # logger.info('Testing accuracy: {}'.format(num_correct/(224*224*len(images))))
-                # logger.info('Testing IOU score: {}'.format(iou))
+                logger.info('Testing accuracy: {}'.format(num_correct/(224*224*len(images))))
+                logger.info('Testing IOU score: {}'.format(iou))
                 running_accuracy += num_correct/(224*224*len(images))
                 running_iou += iou
-        # logger.info("Testing time: {} seconds".format(time.time() - test_start))
-        # logger.info('-----> Overall testing pixel accuracy: {}'.format(running_accuracy / len(test_dataloader)))
-        # logger.info('-----> Overall testing IOU accuracy: {}'.format(running_iou / len(test_dataloader)))
-        # logger.info("Epoch completed in {} seconds.".format(time.time() - epoch_start))
-        print('-----> Overall testing pixel accuracy: {}'.format(running_accuracy / len(test_dataloader)))
-        print('-----> Overall testing IOU accuracy: {}'.format(running_iou / len(test_dataloader)))
+        logger.info("Testing time: {} seconds".format(time.time() - test_start))
+        logger.info('-----> Overall testing pixel accuracy: {}'.format(running_accuracy / len(test_dataloader)))
+        logger.info('-----> Overall testing IOU accuracy: {}'.format(running_iou / len(test_dataloader)))
+        writer.add_scalar('Pixel acc', running_accuracy/len(test_dataloader), i)
+        writer.add_scalar('IOU', running_iou/len(test_dataloader), i)
+        epoch_duration = time.time() - epoch_start
+        logger.info("Epoch completed in {} seconds.".format(epoch_duration))
+        writer.add_scalar('Epoch duration', epoch_duration, i)
     
-    # logger.info('#'*30)
-    # logger.info("DONE TRAINING in {} seconds.".format(time.time() - train_start))
-    # logger.info('#'*30)
+    logger.info('#'*30)
+    logger.info("DONE TRAINING in {} seconds.".format(time.time() - train_start))
+    logger.info('#'*30)
 
-    return model
+    return model, result_path
 
 
-def validate(model, test_dataloader):
+def validate(model, test_dataloader, device):
     # testing pass
     test_start = time.time()
     running_accuracy = 0
@@ -153,12 +161,11 @@ def validate(model, test_dataloader):
             preds = torch.argmax(probs, dim=1, keepdim=True).squeeze()
             num_correct = torch.sum((preds == labels).to(int)).item()
             iou = IOU(labels.detach().cpu().numpy().reshape(-1), preds.detach().cpu().numpy().reshape(-1), average='weighted')
-            # logger.info('Testing accuracy: {}'.format(num_correct/(224*224*len(images))))
-            # logger.info('Testing IOU score: {}'.format(iou))
+            logger.info('Testing accuracy: {}'.format(num_correct/(224*224*len(images))))
+            logger.info('Testing IOU score: {}'.format(iou))
             running_accuracy += num_correct/(224*224*len(images))
             running_iou += iou
-    # logger.info("Testing time: {} seconds".format(time.time() - test_start))
-    # print("Testing time: {} seconds".format(time.time() - test_start))
+    logger.info("Testing time: {} seconds".format(time.time() - test_start))
 
     return {"Testing pixel accuracy": running_accuracy / len(test_dataloader),
             "Testing IOU accuracy": running_iou / len(test_dataloader)}
@@ -192,22 +199,20 @@ if __name__ == '__main__':
         if isinstance(module, torch.nn.Conv2d):
             prune.remove(module, 'weight')
 
-    model = train_model(model, teacher_models, train_dataloader, test_dataloader, obj_id_map)
+    model, result_path = train_model(model, teacher_models, train_dataloader, test_dataloader, obj_id_map, device=device)
 
     model_size = get_parameter_size(model)
         
-    validation_metrics = validate(model, test_dataloader)
+    validation_metrics = validate(model, test_dataloader, device)
 
     print(model_size)
     print(validation_metrics)
-    # results_dirpath = 'runs/kd/kd_validation_results'
-    # os.makedirs(results_dirpath)
-    # results = {
-    #     "size": model_size,
-    #     "accuracies": validation_metrics
-    # }
-    # with open(results_dirpath + "/fcn_kd.json", 'w') as fp:
-    #     json.dump(results, fp)
+    results = {
+        "size": model_size,
+        "accuracies": validation_metrics
+    }
+    with open(result_path + "/fcn_kd.json", 'w') as fp:
+        json.dump(results, fp)
 
 
     
