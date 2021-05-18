@@ -164,6 +164,7 @@ if __name__ == '__main__':
     parser.add_argument('-weights_file', default='', type=str, help='Path to weights pickle file')
     # parser.add_argument('-thresh', default=0.1, type=float, help='Threshold of weights to prune')
     parser.add_argument('-batch_size', default=32, type=int, help='Number of samples in a batch')
+    parser.add_argument('-model', type=str, help='Model class to use')
     args = parser.parse_args()
 
     device = torch.device('cuda:0' if args.device == 'gpu' else 'cpu')
@@ -172,7 +173,19 @@ if __name__ == '__main__':
     print("Loaded data. ({} sec.)".format(time.time() - load_data_start))
 
     # Load trained weights from pkl file
-    model = models.segmentation.deeplabv3_resnet50(pretrained=False, num_classes=151).to(device)
+    if args.model == 'fcn_resnet_50':
+        model = models.segmentation.fcn_resnet50(pretrained=False, num_classes=151).to(device)
+    elif args.model == 'fcn_resnet_101':
+        model = models.segmentation.fcn_resnet101(pretrained=False, num_classes=151).to(device)
+    elif args.model == 'deeplab_resnet_50':
+        model = models.segmentation.deeplabv3_resnet50(pretrained=False, num_classes=151).to(device)
+    elif args.model == 'deeplab_resnet_101':
+        model = models.segmentation.deeplabv3_resnet101(pretrained=False, num_classes=151).to(device)
+    elif args.model == 'deeplab_mobilenet_v3_large':
+        model = models.segmentation.deeplabv3_mobilenet_v3_large(pretrained=False, num_classes=151).to(device)
+    elif args.model == 'lraspp':
+        model = models.segmentation.lraspp_mobilenet_v3_large(pretrained=False, num_classes=151).to(device)
+        
     model.load_state_dict(torch.load(args.weights_file, map_location=device))
     model_size = get_parameter_size(model)
     print("Original model size: ", model_size)
